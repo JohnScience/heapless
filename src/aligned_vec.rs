@@ -1,5 +1,5 @@
 use core::mem::MaybeUninit;
-use core::{cmp::Ordering, fmt, hash, iter::FromIterator, marker::PhantomData, ops, ptr, slice};
+use core::{cmp::Ordering, fmt, hash, iter::FromIterator, ops, ptr, slice};
 
 /// Fixed capacity, aligned vector.
 ///
@@ -35,7 +35,7 @@ use core::{cmp::Ordering, fmt, hash, iter::FromIterator, marker::PhantomData, op
 #[repr(C)]
 pub struct AlignedVec<T, A, const N: usize> {
     // this is a widely used hack to make the buffer aligned
-    alignment_field: [PhantomData<A>; 0],
+    alignment_field: [A; 0],
     buffer: [MaybeUninit<T>; N],
     len: usize,
 }
@@ -886,6 +886,53 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     }
 }
 
+impl<A, const N: usize> AlignedVec<u8, A, N> {
+    /// Transmutes the aligned buffer to another type.
+    /// The length of the `AlignedVec` does not participate
+    /// in the transmutation.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let mut v = AlignedVec::<u8, /*alignas*/ u32, 4>::new();
+    /// v.extend_from_slice(&[0, 0, 0, 0]).unwrap();
+    /// let number = unsafe { v.transmute_buffer::<u32>() };
+    /// assert_eq!(number, 0);
+    /// ```
+    ///
+    /// # Safety
+    ///
+    /// The size of the buffer (not the type) must be the same as the size of T2.
+    /// The alignment of the buffer must be the same as the alignment of T2.
+    ///
+    /// # Panics
+    ///
+    /// In debug mode, this function panics if the size of the buffer
+    /// is not the same as the size of T2 or (as a safety measure) if the
+    /// alignment of the buffer is not the same as the alignment of T2.
+    pub unsafe fn transmute_buffer<T2>(self) -> T2
+    where
+        T2: Sized,
+    {
+        // transmute_unchecked is unstable
+        // transmute wouldn't work because we can't guarantee that
+        // the size of the buffer is the same as the size of T2
+
+        // #[cfg(debug_assertions)] was used here to have a chance of constant implementation.
+        // However, `pointer::align_offset` is not a constant function at the time of writing.
+        #[cfg(debug_assertions)]
+        if core::mem::size_of::<T2>() != self.len {
+            panic!("AlignedVec::transmute_buffer: size mismatch")
+        }
+        let buffer_ptr = self.buffer.as_ptr();
+        #[cfg(debug_assertions)]
+        if buffer_ptr as usize % core::mem::align_of::<A>() != 0 {
+            panic!("AlignedVec::transmute_buffer: alignment of the buffer is incorrect")
+        }
+        core::ptr::read(buffer_ptr as *const T2)
+    }
+}
+
 // Trait implementations
 
 impl<T, A, const N: usize> Default for AlignedVec<T, A, N> {
@@ -1648,5 +1695,14 @@ mod tests {
 
         // Validate full
         assert!(v.is_full());
+    }
+
+    // https://godbolt.org/z/K5955r7WG
+    #[test]
+    fn simple_transmute_buffer() {
+        let mut v = AlignedVec::<u8, /*alignas*/ u32, 4>::new();
+        v.extend_from_slice(&[0, 0, 0, 0]).unwrap();
+        let number = unsafe { v.transmute_buffer::<u32>() };
+        assert_eq!(number, 0);
     }
 }
