@@ -60,6 +60,7 @@
 )]
 //! - [`String`]
 //! - [`Vec`]
+//! - [`AlignedVec`]
 //! - [`mpmc::Q*`](mpmc) -- multiple producer multiple consumer lock-free queue
 //! - [`spsc::Queue`] -- single producer single consumer lock-free queue
 //!

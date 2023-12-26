@@ -275,7 +275,7 @@ pub type AlignedVec<T, A, const N: usize> = GenericVec<T, A, N>;
 /// - the type used for alignment `A;`
 /// - the capacity `N`.
 ///
-/// Instead of using this type directly, you should use [`Vec`] or [`AlignedVec`] types-aliases instead.
+/// **Semver-exempt**. Instead of using this type directly, you should use [`Vec`] or [`AlignedVec`] types-aliases instead.
 ///
 /// # Examples
 ///
