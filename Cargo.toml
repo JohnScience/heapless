@@ -21,11 +21,19 @@ version = "0.8.0"
 portable-atomic = ["dep:portable-atomic"]
 
 # Enable polyfilling of atomics via portable-atomic, using critical section for locking
-portable-atomic-critical-section = ["dep:portable-atomic", "portable-atomic", "portable-atomic?/critical-section"]
+portable-atomic-critical-section = [
+  "dep:portable-atomic",
+  "portable-atomic",
+  "portable-atomic?/critical-section",
+]
 
 # Enable polyfilling of atomics via portable-atomic, using disabling interrupts for locking.
 # WARNING: this is only sound for single-core bare-metal privileged-mode targets!
-portable-atomic-unsafe-assume-single-core = ["dep:portable-atomic", "portable-atomic", "portable-atomic?/unsafe-assume-single-core"]
+portable-atomic-unsafe-assume-single-core = [
+  "dep:portable-atomic",
+  "portable-atomic",
+  "portable-atomic?/unsafe-assume-single-core",
+]
 
 # implement serde traits.
 serde = ["dep:serde"]
@@ -38,6 +46,9 @@ defmt-03 = ["dep:defmt"]
 
 # Enable larger MPMC sizes.
 mpmc_large = []
+
+# Implement AlignedVec
+aligned_vec = []
 
 [dependencies]
 portable-atomic = { version = "1.0", optional = true }
@@ -54,7 +65,14 @@ stable_deref_trait = { version = "1", default-features = false }
 ufmt = "0.2"
 
 [package.metadata.docs.rs]
-features = ["ufmt", "serde", "defmt-03", "mpmc_large", "portable-atomic-critical-section"]
+features = [
+  "ufmt",
+  "serde",
+  "defmt-03",
+  "mpmc_large",
+  "portable-atomic-critical-section",
+  "aligned_vec",
+]
 # for the pool module
 targets = ["i686-unknown-linux-gnu"]
 rustdoc-args = ["--cfg", "docsrs"]
