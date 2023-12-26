@@ -75,8 +75,7 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 
-#[cfg(feature = "aligned_vec")]
-pub use aligned_vec::AlignedVec;
+pub use aligned_vec::{AlignedVec, VecBuf};
 pub use binary_heap::BinaryHeap;
 pub use deque::Deque;
 pub use histbuf::{HistoryBuffer, OldestOrdered};
@@ -94,7 +93,6 @@ pub use vec::Vec;
 #[cfg(test)]
 mod test_helpers;
 
-#[cfg(feature = "aligned_vec")]
 mod aligned_vec;
 mod deque;
 mod histbuf;

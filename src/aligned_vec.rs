@@ -34,16 +34,67 @@ use core::{cmp::Ordering, fmt, hash, iter::FromIterator, ops, ptr, slice};
 /// ```
 #[repr(C)]
 pub struct AlignedVec<T, A, const N: usize> {
-    // this is a widely used hack to make the buffer aligned
-    alignment_field: [A; 0],
-    buffer: [MaybeUninit<T>; N],
+    storage: VecBuf<T, A, N>,
     len: usize,
 }
 
-impl<T, A, const N: usize> AlignedVec<T, A, N> {
+/// Buffer of `N` elements of type `T` aligned to `A`.
+///
+/// This type is meant to be used as a storage for `Vec` and `AlignedVec`.
+#[repr(C)]
+pub struct VecBuf<T, A, const N: usize> {
+    // this is a widely used hack to make the buffer aligned
+    alignment_field: [A; 0],
+    buffer: [MaybeUninit<T>; N],
+}
+
+impl<T, A, const N: usize> VecBuf<T, A, N> {
     const ELEM: MaybeUninit<T> = MaybeUninit::uninit();
     const INIT: [MaybeUninit<T>; N] = [Self::ELEM; N]; // important for optimization of `new`
 
+    /// Constructs a new, empty, aligned vector with a fixed capacity of `N`
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use heapless::VecBuf;
+    ///
+    /// #[repr(align(256))]
+    /// struct A256;
+    ///
+    /// // allocate the vector buffer on the stack
+    /// let mut x: VecBuf<u8, A256, 16> = VecBuf::new();
+    ///
+    /// // allocate the vector buffer in a static variable
+    /// static mut X: VecBuf<u8, A256, 16> = VecBuf::new();
+    /// ```
+    /// `VecBuf` `const` constructor; wrap the returned value in [`VecBuf`].
+    pub const fn new() -> Self {
+        Self {
+            alignment_field: [],
+            buffer: Self::INIT,
+        }
+    }
+
+    /// Returns a raw pointer to the vector’s buffer. The pointer
+    /// is always aligned.
+    pub fn as_ptr(&self) -> *const T {
+        self.buffer.as_ptr() as *const T
+    }
+
+    /// Returns a raw pointer to the vector’s buffer, which may be mutated through.
+    /// The pointer is always aligned.
+    pub fn as_mut_ptr(&mut self) -> *mut T {
+        self.buffer.as_mut_ptr() as *mut T
+    }
+
+    /// Returns the mutable reference to the possibly uninitialized element at the given index..
+    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut MaybeUninit<T> {
+        self.buffer.get_unchecked_mut(index)
+    }
+}
+
+impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// Constructs a new, empty, aligned vector with a fixed capacity of `N`
     ///
     /// # Examples
@@ -63,9 +114,8 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// `AlignedVec` `const` constructor; wrap the returned value in [`AlignedVec`].
     pub const fn new() -> Self {
         Self {
-            alignment_field: [],
-            buffer: Self::INIT,
             len: 0,
+            storage: VecBuf::new(),
         }
     }
 
@@ -112,13 +162,13 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// Returns a raw pointer to the vector’s buffer. The pointer
     /// is always aligned.
     pub fn as_ptr(&self) -> *const T {
-        self.buffer.as_ptr() as *const T
+        self.storage.as_ptr()
     }
 
     /// Returns a raw pointer to the vector’s buffer, which may be mutated through.
     /// The pointer is always aligned.
     pub fn as_mut_ptr(&mut self) -> *mut T {
-        self.buffer.as_mut_ptr() as *mut T
+        self.storage.as_mut_ptr()
     }
 
     /// Extracts a slice containing the entire vector.
@@ -139,7 +189,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     pub fn as_slice(&self) -> &[T] {
         // NOTE(unsafe) avoid bound checks in the slicing operation
         // &buffer[..self.len]
-        unsafe { slice::from_raw_parts(self.buffer.as_ptr() as *const T, self.len) }
+        unsafe { slice::from_raw_parts(self.storage.as_ptr(), self.len) }
     }
 
     /// Returns the contents of the vector as an array of length `M` if the length
@@ -162,7 +212,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     pub fn into_array<const M: usize>(self) -> Result<[T; M], Self> {
         if self.len == M {
             // This is how the unstable `MaybeUninit::array_assume_init` method does it
-            let array = unsafe { (&self.buffer as *const _ as *const [T; M]).read() };
+            let array = unsafe { (self.storage.as_ptr() as *const [T; M]).read() };
 
             // We don't want `self`'s destructor to be called because that would drop all the
             // items in the array
@@ -193,7 +243,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     pub fn as_mut_slice(&mut self) -> &mut [T] {
         // NOTE(unsafe) avoid bound checks in the slicing operation
         // &mut buffer[..self.len]
-        unsafe { slice::from_raw_parts_mut(self.buffer.as_mut_ptr() as *mut T, self.len) }
+        unsafe { slice::from_raw_parts_mut(self.storage.as_mut_ptr() as *mut T, self.len) }
     }
 
     /// Returns the maximum number of elements the vector can hold.
@@ -286,7 +336,11 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
         debug_assert!(!self.is_empty());
 
         self.len -= 1;
-        self.buffer.get_unchecked_mut(self.len).as_ptr().read()
+        self.storage
+            .buffer
+            .get_unchecked_mut(self.len)
+            .as_ptr()
+            .read()
     }
 
     /// Appends an `item` to the back of the collection
@@ -299,7 +353,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
         // use `ptr::write` to avoid running `T`'s destructor on the uninitialized memory
         debug_assert!(!self.is_full());
 
-        *self.buffer.get_unchecked_mut(self.len) = MaybeUninit::new(item);
+        *self.storage.get_unchecked_mut(self.len) = MaybeUninit::new(item);
 
         self.len += 1;
     }
@@ -923,7 +977,7 @@ impl<A, const N: usize> AlignedVec<u8, A, N> {
         if core::mem::size_of::<T2>() != self.len {
             panic!("AlignedVec::transmute_buffer: size mismatch")
         }
-        let buffer_ptr = self.buffer.as_ptr();
+        let buffer_ptr = self.storage.as_ptr();
         #[cfg(debug_assertions)]
         if buffer_ptr as usize % core::mem::align_of::<A>() != 0 {
             panic!("AlignedVec::transmute_buffer: alignment of the buffer is incorrect")
@@ -1048,7 +1102,14 @@ impl<T, A, const N: usize> Iterator for IntoIter<T, A, N> {
     type Item = T;
     fn next(&mut self) -> Option<Self::Item> {
         if self.next < self.vec.len() {
-            let item = unsafe { self.vec.buffer.get_unchecked_mut(self.next).as_ptr().read() };
+            let item = unsafe {
+                self.vec
+                    .storage
+                    .buffer
+                    .get_unchecked_mut(self.next)
+                    .as_ptr()
+                    .read()
+            };
             self.next += 1;
             Some(item)
         } else {
@@ -1067,7 +1128,7 @@ where
         if self.next < self.vec.len() {
             let s = unsafe {
                 slice::from_raw_parts(
-                    (self.vec.buffer.as_ptr() as *const T).add(self.next),
+                    (self.vec.storage.as_ptr() as *const T).add(self.next),
                     self.vec.len() - self.next,
                 )
             };
