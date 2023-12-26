@@ -32,7 +32,6 @@ use core::{cmp::Ordering, fmt, hash, iter::FromIterator, ops, ptr, slice};
 /// }
 /// assert_eq!(*vec, [7, 1, 2, 3]);
 /// ```
-#[repr(C)]
 pub struct AlignedVec<T, A, const N: usize> {
     storage: VecBuf<T, A, N>,
     len: usize,

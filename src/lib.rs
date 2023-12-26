@@ -75,9 +75,9 @@
 #![deny(missing_docs)]
 #![deny(warnings)]
 
-pub use aligned_vec::{AlignedVec, VecBuf};
 pub use binary_heap::BinaryHeap;
 pub use deque::Deque;
+pub use generic_vec::{AlignedVec, VecBuf};
 pub use histbuf::{HistoryBuffer, OldestOrdered};
 pub use indexmap::{
     Bucket, Entry, FnvIndexMap, IndexMap, Iter as IndexMapIter, IterMut as IndexMapIterMut,
@@ -93,8 +93,8 @@ pub use vec::Vec;
 #[cfg(test)]
 mod test_helpers;
 
-mod aligned_vec;
 mod deque;
+mod generic_vec;
 mod histbuf;
 mod indexmap;
 mod indexset;
