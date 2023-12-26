@@ -443,7 +443,6 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// use core::iter::FromIterator;
     /// use heapless::AlignedVec;
     ///
-    ///
     /// #[repr(align(256))]
     /// struct A256;
     ///
