@@ -15,6 +15,7 @@ repository = "https://github.com/rust-embedded/heapless"
 version = "0.8.0"
 
 [features]
+generic-vec = []
 
 # Enable polyfilling of atomics via `portable-atomic`.
 # `portable-atomic` polyfills some functionality by default, but to get full atomics you must
@@ -69,6 +70,7 @@ features = [
   "defmt-03",
   "mpmc_large",
   "portable-atomic-critical-section",
+  "generic-vec",
 ]
 # for the pool module
 targets = ["i686-unknown-linux-gnu"]

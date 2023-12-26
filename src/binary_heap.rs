@@ -17,7 +17,7 @@ use core::{
     ptr, slice,
 };
 
-use crate::vec::Vec;
+use crate::Vec;
 
 /// Min-heap
 pub enum Min {}

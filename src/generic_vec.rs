@@ -1,7 +1,281 @@
 use core::mem::MaybeUninit;
 use core::{cmp::Ordering, fmt, hash, iter::FromIterator, ops, ptr, slice};
 
-/// Fixed capacity, aligned vector.
+/// The default (unaligned) fixed capacity vector type.
+///
+/// See [`AlignedVec`] for the aligned version.
+///
+/// # Examples
+///
+/// ```
+/// use heapless::Vec;
+///
+/// // A vector with a fixed capacity of 8 elements allocated on the stack
+/// let mut vec = Vec::<_, 8>::new();
+/// vec.push(1);
+/// vec.push(2);
+///
+/// assert_eq!(vec.len(), 2);
+/// assert_eq!(vec[0], 1);
+///
+/// assert_eq!(vec.pop(), Some(2));
+/// assert_eq!(vec.len(), 1);
+///
+/// vec[0] = 7;
+/// assert_eq!(vec[0], 7);
+///
+/// vec.extend([1, 2, 3].iter().cloned());
+///
+/// for x in &vec {
+///     println!("{}", x);
+/// }
+/// assert_eq!(*vec, [7, 1, 2, 3]);
+/// ```
+///
+/// [`Vec::new`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// // allocate the vector on the stack
+/// let mut x: Vec<u8, 16> = Vec::new();
+///
+/// // allocate the vector in a static variable
+/// static mut X: Vec<u8, 16> = Vec::new();
+/// ```
+///
+/// [`Vec::extend_from_slice`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut vec = Vec::<u8, 8>::new();
+/// vec.push(1).unwrap();
+/// vec.extend_from_slice(&[2, 3, 4]).unwrap();
+/// assert_eq!(*vec, [1, 2, 3, 4]);
+/// ```
+///
+/// [`Vec::as_slice`].
+///
+/// ```
+/// use heapless::Vec;
+/// let buffer: Vec<u8, 5> = Vec::from_slice(&[1, 2, 3, 5, 8]).unwrap();
+/// assert_eq!(buffer.as_slice(), &[1, 2, 3, 5, 8]);
+/// ```
+///
+/// [`Vec::into_array`].
+///
+/// ```
+/// use heapless::Vec;
+/// let buffer: Vec<u8, 42> = Vec::from_slice(&[1, 2, 3, 5, 8]).unwrap();
+/// let array: [u8; 5] = buffer.into_array().unwrap();
+/// assert_eq!(array, [1, 2, 3, 5, 8]);
+/// ```
+///
+/// [`Vec::as_mut_slice`].
+///
+/// ```
+/// use heapless::Vec;
+/// let mut buffer: Vec<u8, 5> = Vec::from_slice(&[1, 2, 3, 5, 8]).unwrap();
+/// buffer[0] = 9;
+/// assert_eq!(buffer.as_slice(), &[9, 2, 3, 5, 8]);
+/// ```
+///
+/// [`Vec::resize_default`].
+///
+/// This method can be useful for situations in which the vector
+/// is serving as a buffer for other code, particularly over FFI:
+///
+/// ```no_run
+/// # #![allow(dead_code)]
+/// use heapless::Vec;
+///
+/// # // This is just a minimal skeleton for the doc example;
+/// # // don't use this as a starting point for a real library.
+/// # pub struct StreamWrapper { strm: *mut core::ffi::c_void }
+/// # const Z_OK: i32 = 0;
+/// # extern "C" {
+/// #     fn deflateGetDictionary(
+/// #         strm: *mut core::ffi::c_void,
+/// #         dictionary: *mut u8,
+/// #         dictLength: *mut usize,
+/// #     ) -> i32;
+/// # }
+/// # impl StreamWrapper {
+/// pub fn get_dictionary(&self) -> Option<Vec<u8, 32768>> {
+///     // Per the FFI method's docs, "32768 bytes is always enough".
+///     let mut dict = Vec::new();
+///     let mut dict_length = 0;
+///     // SAFETY: When `deflateGetDictionary` returns `Z_OK`, it holds that:
+///     // 1. `dict_length` elements were initialized.
+///     // 2. `dict_length` <= the capacity (32_768)
+///     // which makes `set_len` safe to call.
+///     unsafe {
+///         // Make the FFI call...
+///         let r = deflateGetDictionary(self.strm, dict.as_mut_ptr(), &mut dict_length);
+///         if r == Z_OK {
+///             // ...and update the length to what was initialized.
+///             dict.set_len(dict_length);
+///             Some(dict)
+///         } else {
+///             None
+///         }
+///     }
+/// }
+/// # }
+/// ```
+///
+/// While the following example is sound, there is a memory leak since
+/// the inner vectors were not freed prior to the `set_len` call:
+///
+/// ```
+/// use core::iter::FromIterator;
+/// use heapless::Vec;
+///
+/// let mut vec = Vec::<Vec<u8, 3>, 3>::from_iter(
+///     [
+///         Vec::from_iter([1, 0, 0].iter().cloned()),
+///         Vec::from_iter([0, 1, 0].iter().cloned()),
+///         Vec::from_iter([0, 0, 1].iter().cloned()),
+///     ]
+///     .iter()
+///     .cloned(),
+/// );
+/// // SAFETY:
+/// // 1. `old_len..0` is empty so no elements need to be initialized.
+/// // 2. `0 <= capacity` always holds whatever `capacity` is.
+/// unsafe {
+///     vec.set_len(0);
+/// }
+/// ```
+///
+/// Normally, here, one would use [`Vec::clear`] instead to correctly drop
+/// the contents and thus not leak memory.
+///
+/// [`Vec::swap_remove`].
+///
+/// ```
+/// use heapless::Vec;
+///// use heapless::consts::*;
+///
+/// let mut v: Vec<_, 8> = Vec::new();
+/// v.push("foo").unwrap();
+/// v.push("bar").unwrap();
+/// v.push("baz").unwrap();
+/// v.push("qux").unwrap();
+///
+/// assert_eq!(v.swap_remove(1), "bar");
+/// assert_eq!(&*v, ["foo", "qux", "baz"]);
+///
+/// assert_eq!(v.swap_remove(0), "foo");
+/// assert_eq!(&*v, ["baz", "qux"]);
+/// ```
+///
+/// [`Vec::swap_remove_unchecked`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut v: Vec<_, 8> = Vec::new();
+/// v.push("foo").unwrap();
+/// v.push("bar").unwrap();
+/// v.push("baz").unwrap();
+/// v.push("qux").unwrap();
+///
+/// assert_eq!(unsafe { v.swap_remove_unchecked(1) }, "bar");
+/// assert_eq!(&*v, ["foo", "qux", "baz"]);
+///
+/// assert_eq!(unsafe { v.swap_remove_unchecked(0) }, "foo");
+/// assert_eq!(&*v, ["baz", "qux"]);
+/// ```
+///
+/// [`Vec::starts_with`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let v: Vec<_, 8> = Vec::from_slice(b"abc").unwrap();
+/// assert_eq!(v.starts_with(b""), true);
+/// assert_eq!(v.starts_with(b"ab"), true);
+/// assert_eq!(v.starts_with(b"bc"), false);
+/// ```
+///
+/// [`Vec::ends_with`].
+///
+///  ```
+/// use heapless::Vec;
+///
+/// let v: Vec<_, 8> = Vec::from_slice(b"abc").unwrap();
+/// assert_eq!(v.ends_with(b""), true);
+/// assert_eq!(v.ends_with(b"ab"), false);
+/// assert_eq!(v.ends_with(b"bc"), true);
+/// ```
+///
+/// [`Vec::insert`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut vec: Vec<_, 8> = Vec::from_slice(&[1, 2, 3]).unwrap();
+/// vec.insert(1, 4);
+/// assert_eq!(vec, [1, 4, 2, 3]);
+/// vec.insert(4, 5);
+/// assert_eq!(vec, [1, 4, 2, 3, 5]);
+/// ```
+///
+/// [`Vec::remove`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut v: Vec<_, 8> = Vec::from_slice(&[1, 2, 3]).unwrap();
+/// assert_eq!(v.remove(1), 2);
+/// assert_eq!(v, [1, 3]);
+/// ```
+///
+/// [`Vec::retain`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut vec: Vec<_, 8> = Vec::from_slice(&[1, 2, 3, 4, 5]).unwrap();
+/// let keep = [false, true, true, false, true];
+/// let mut iter = keep.iter();
+/// vec.retain(|_| *iter.next().unwrap());
+/// assert_eq!(vec, [2, 3, 5]);
+/// ```
+///
+/// [`Vec::retain_mut`].
+///
+/// ```
+/// use heapless::Vec;
+///
+/// let mut vec: Vec<_, 8> = Vec::from_slice(&[1, 2, 3, 4]).unwrap();
+/// vec.retain_mut(|x| {
+///     if *x <= 3 {
+///         *x += 1;
+///         true
+///     } else {
+///         false
+///     }
+/// });
+/// assert_eq!(vec, [2, 3, 4]);
+/// ```
+pub type Vec<T, const N: usize> = GenericVec<T, u8, N>;
+
+/// The aligned fixed capacity vector type. Currently, this is just an alias for [`GenericVec`]
+/// without any parameterization.
+///
+/// See [`Vec`] for the unaligned version.
+pub type AlignedVec<T, A, const N: usize> = GenericVec<T, A, N>;
+
+/// Generic fixed-capacity vector which allows to specify...
+///
+/// - the type of the elements `T`;
+/// - the type used for alignment `A;`
+/// - the capacity `N`.
+///
+/// Instead of using this type directly, you should use [`Vec`] or [`AlignedVec`] types-aliases instead.
 ///
 /// # Examples
 ///
@@ -32,7 +306,7 @@ use core::{cmp::Ordering, fmt, hash, iter::FromIterator, ops, ptr, slice};
 /// }
 /// assert_eq!(*vec, [7, 1, 2, 3]);
 /// ```
-pub struct AlignedVec<T, A, const N: usize> {
+pub struct GenericVec<T, A, const N: usize> {
     storage: VecBuf<T, A, N>,
     len: usize,
 }
@@ -93,7 +367,7 @@ impl<T, A, const N: usize> VecBuf<T, A, N> {
     }
 }
 
-impl<T, A, const N: usize> AlignedVec<T, A, N> {
+impl<T, A, const N: usize> GenericVec<T, A, N> {
     /// Constructs a new, empty, aligned vector with a fixed capacity of `N`
     ///
     /// # Examples
@@ -138,7 +412,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     where
         T: Clone,
     {
-        let mut v = AlignedVec::new();
+        let mut v = GenericVec::new();
         v.extend_from_slice(other)?;
         Ok(v)
     }
@@ -429,10 +703,10 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// is done using one of the safe operations instead, such as
     /// [`truncate`], [`resize`], [`extend`], or [`clear`].
     ///
-    /// [`truncate`]: Self::truncate
-    /// [`resize`]: Self::resize
+    /// [`truncate`]: Vec::truncate
+    /// [`resize`]: Vec::resize
     /// [`extend`]: core::iter::Extend
-    /// [`clear`]: Self::clear
+    /// [`clear`]: Vec::clear
     ///
     /// # Safety
     ///
@@ -516,7 +790,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     /// }
     /// ```
     ///
-    /// Normally, here, one would use [`clear`] instead to correctly drop
+    /// Normally, here, one would use [`Vec::clear`] instead to correctly drop
     /// the contents and thus not leak memory.
     pub unsafe fn set_len(&mut self, new_len: usize) {
         debug_assert!(new_len <= self.capacity());
@@ -857,7 +1131,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
         // It shifts unchecked elements to cover holes and `set_len` to the correct length.
         // In cases when predicate and `drop` never panick, it will be optimized out.
         struct BackshiftOnDrop<'a, T, A, const N: usize> {
-            v: &'a mut AlignedVec<T, A, N>,
+            v: &'a mut GenericVec<T, A, N>,
             processed_len: usize,
             deleted_cnt: usize,
             original_len: usize,
@@ -938,7 +1212,7 @@ impl<T, A, const N: usize> AlignedVec<T, A, N> {
     }
 }
 
-impl<A, const N: usize> AlignedVec<u8, A, N> {
+impl<A, const N: usize> GenericVec<u8, A, N> {
     /// Transmutes the aligned buffer to another type.
     /// The length of the `AlignedVec` does not participate
     /// in the transmutation.
@@ -987,13 +1261,13 @@ impl<A, const N: usize> AlignedVec<u8, A, N> {
 
 // Trait implementations
 
-impl<T, A, const N: usize> Default for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> Default for GenericVec<T, A, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T, A, const N: usize> fmt::Debug for AlignedVec<T, A, N>
+impl<T, A, const N: usize> fmt::Debug for GenericVec<T, A, N>
 where
     T: fmt::Debug,
 {
@@ -1002,7 +1276,7 @@ where
     }
 }
 
-impl<A, const N: usize> fmt::Write for AlignedVec<u8, A, N> {
+impl<A, const N: usize> fmt::Write for GenericVec<u8, A, N> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
         match self.extend_from_slice(s.as_bytes()) {
             Ok(()) => Ok(()),
@@ -1011,7 +1285,7 @@ impl<A, const N: usize> fmt::Write for AlignedVec<u8, A, N> {
     }
 }
 
-impl<T, A, const N: usize> Drop for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> Drop for GenericVec<T, A, N> {
     fn drop(&mut self) {
         // We drop each element used in the vector by turning into a `&mut [T]`.
         unsafe {
@@ -1020,15 +1294,15 @@ impl<T, A, const N: usize> Drop for AlignedVec<T, A, N> {
     }
 }
 
-impl<'a, T: Clone, A, const N: usize> TryFrom<&'a [T]> for AlignedVec<T, A, N> {
+impl<'a, T: Clone, A, const N: usize> TryFrom<&'a [T]> for GenericVec<T, A, N> {
     type Error = ();
 
     fn try_from(slice: &'a [T]) -> Result<Self, Self::Error> {
-        AlignedVec::from_slice(slice)
+        GenericVec::from_slice(slice)
     }
 }
 
-impl<T, A, const N: usize> Extend<T> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> Extend<T> for GenericVec<T, A, N> {
     fn extend<I>(&mut self, iter: I)
     where
         I: IntoIterator<Item = T>,
@@ -1037,7 +1311,7 @@ impl<T, A, const N: usize> Extend<T> for AlignedVec<T, A, N> {
     }
 }
 
-impl<'a, T, A, const N: usize> Extend<&'a T> for AlignedVec<T, A, N>
+impl<'a, T, A, const N: usize> Extend<&'a T> for GenericVec<T, A, N>
 where
     T: 'a + Copy,
 {
@@ -1049,7 +1323,7 @@ where
     }
 }
 
-impl<T, A, const N: usize> hash::Hash for AlignedVec<T, A, N>
+impl<T, A, const N: usize> hash::Hash for GenericVec<T, A, N>
 where
     T: core::hash::Hash,
 {
@@ -1058,7 +1332,7 @@ where
     }
 }
 
-impl<'a, T, A, const N: usize> IntoIterator for &'a AlignedVec<T, A, N> {
+impl<'a, T, A, const N: usize> IntoIterator for &'a GenericVec<T, A, N> {
     type Item = &'a T;
     type IntoIter = slice::Iter<'a, T>;
 
@@ -1067,7 +1341,7 @@ impl<'a, T, A, const N: usize> IntoIterator for &'a AlignedVec<T, A, N> {
     }
 }
 
-impl<'a, T, A, const N: usize> IntoIterator for &'a mut AlignedVec<T, A, N> {
+impl<'a, T, A, const N: usize> IntoIterator for &'a mut GenericVec<T, A, N> {
     type Item = &'a mut T;
     type IntoIter = slice::IterMut<'a, T>;
 
@@ -1076,12 +1350,12 @@ impl<'a, T, A, const N: usize> IntoIterator for &'a mut AlignedVec<T, A, N> {
     }
 }
 
-impl<T, A, const N: usize> FromIterator<T> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> FromIterator<T> for GenericVec<T, A, N> {
     fn from_iter<I>(iter: I) -> Self
     where
         I: IntoIterator<Item = T>,
     {
-        let mut vec = AlignedVec::new();
+        let mut vec = GenericVec::new();
         for i in iter {
             vec.push(i).ok().expect("AlignedVec::from_iter overflow");
         }
@@ -1093,7 +1367,7 @@ impl<T, A, const N: usize> FromIterator<T> for AlignedVec<T, A, N> {
 ///
 /// This struct is created by calling the `into_iter` method on [`Vec`][`Vec`].
 pub struct IntoIter<T, A, const N: usize> {
-    vec: AlignedVec<T, A, N>,
+    vec: GenericVec<T, A, N>,
     next: usize,
 }
 
@@ -1122,7 +1396,7 @@ where
     T: Clone,
 {
     fn clone(&self) -> Self {
-        let mut vec = AlignedVec::new();
+        let mut vec = GenericVec::new();
 
         if self.next < self.vec.len() {
             let s = unsafe {
@@ -1149,7 +1423,7 @@ impl<T, A, const N: usize> Drop for IntoIter<T, A, N> {
     }
 }
 
-impl<T, A, const N: usize> IntoIterator for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> IntoIterator for GenericVec<T, A, N> {
     type Item = T;
     type IntoIter = IntoIter<T, A, N>;
 
@@ -1158,18 +1432,18 @@ impl<T, A, const N: usize> IntoIterator for AlignedVec<T, A, N> {
     }
 }
 
-impl<T1, T2, A1, A2, const N1: usize, const N2: usize> PartialEq<AlignedVec<T2, A2, N2>>
-    for AlignedVec<T1, A1, N1>
+impl<T1, T2, A1, A2, const N1: usize, const N2: usize> PartialEq<GenericVec<T2, A2, N2>>
+    for GenericVec<T1, A1, N1>
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T2, A2, N2>) -> bool {
+    fn eq(&self, other: &GenericVec<T2, A2, N2>) -> bool {
         <[T1]>::eq(self, &**other)
     }
 }
 
 // Vec<A, N> == [B]
-impl<T1, T2, A, const N: usize> PartialEq<[T2]> for AlignedVec<T1, A, N>
+impl<T1, T2, A, const N: usize> PartialEq<[T2]> for GenericVec<T1, A, N>
 where
     T1: PartialEq<T2>,
 {
@@ -1179,17 +1453,17 @@ where
 }
 
 // [B] == Vec<A, N>
-impl<T1, T2, A, const N: usize> PartialEq<AlignedVec<T1, A, N>> for [T2]
+impl<T1, T2, A, const N: usize> PartialEq<GenericVec<T1, A, N>> for [T2]
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T1, A, N>) -> bool {
+    fn eq(&self, other: &GenericVec<T1, A, N>) -> bool {
         <[T1]>::eq(other, self)
     }
 }
 
 // Vec<A, N> == &[B]
-impl<T1, T2, A, const N: usize> PartialEq<&[T2]> for AlignedVec<T1, A, N>
+impl<T1, T2, A, const N: usize> PartialEq<&[T2]> for GenericVec<T1, A, N>
 where
     T1: PartialEq<T2>,
 {
@@ -1199,17 +1473,17 @@ where
 }
 
 // &[B] == Vec<A, N>
-impl<T1, T2, A, const N: usize> PartialEq<AlignedVec<T1, A, N>> for &[T2]
+impl<T1, T2, A, const N: usize> PartialEq<GenericVec<T1, A, N>> for &[T2]
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T1, A, N>) -> bool {
+    fn eq(&self, other: &GenericVec<T1, A, N>) -> bool {
         <[T1]>::eq(other, &self[..])
     }
 }
 
 // Vec<A, N> == &mut [B]
-impl<T1, T2, A, const N: usize> PartialEq<&mut [T2]> for AlignedVec<T1, A, N>
+impl<T1, T2, A, const N: usize> PartialEq<&mut [T2]> for GenericVec<T1, A, N>
 where
     T1: PartialEq<T2>,
 {
@@ -1219,18 +1493,18 @@ where
 }
 
 // &mut [B] == Vec<A, N>
-impl<T1, T2, A, const N: usize> PartialEq<AlignedVec<T1, A, N>> for &mut [T2]
+impl<T1, T2, A, const N: usize> PartialEq<GenericVec<T1, A, N>> for &mut [T2]
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T1, A, N>) -> bool {
+    fn eq(&self, other: &GenericVec<T1, A, N>) -> bool {
         <[T1]>::eq(other, &self[..])
     }
 }
 
 // Vec<A, N> == [B; M]
 // Equality does not require equal capacity
-impl<T1, T2, A, const N: usize, const M: usize> PartialEq<[T2; M]> for AlignedVec<T1, A, N>
+impl<T1, T2, A, const N: usize, const M: usize> PartialEq<[T2; M]> for GenericVec<T1, A, N>
 where
     T1: PartialEq<T2>,
 {
@@ -1241,18 +1515,18 @@ where
 
 // [B; M] == Vec<A, N>
 // Equality does not require equal capacity
-impl<T1, T2, A, const N: usize, const M: usize> PartialEq<AlignedVec<T1, A, N>> for [T2; M]
+impl<T1, T2, A, const N: usize, const M: usize> PartialEq<GenericVec<T1, A, N>> for [T2; M]
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T1, A, N>) -> bool {
+    fn eq(&self, other: &GenericVec<T1, A, N>) -> bool {
         <[T1]>::eq(other, &self[..])
     }
 }
 
 // Vec<A, N> == &[B; M]
 // Equality does not require equal capacity
-impl<T1, T2, A, const N: usize, const M: usize> PartialEq<&[T2; M]> for AlignedVec<T1, A, N>
+impl<T1, T2, A, const N: usize, const M: usize> PartialEq<&[T2; M]> for GenericVec<T1, A, N>
 where
     T1: PartialEq<T2>,
 {
@@ -1263,29 +1537,29 @@ where
 
 // &[B; M] == Vec<A, N>
 // Equality does not require equal capacity
-impl<T1, T2, A, const N: usize, const M: usize> PartialEq<AlignedVec<T1, A, N>> for &[T2; M]
+impl<T1, T2, A, const N: usize, const M: usize> PartialEq<GenericVec<T1, A, N>> for &[T2; M]
 where
     T1: PartialEq<T2>,
 {
-    fn eq(&self, other: &AlignedVec<T1, A, N>) -> bool {
+    fn eq(&self, other: &GenericVec<T1, A, N>) -> bool {
         <[T1]>::eq(other, &self[..])
     }
 }
 
 // Implements Eq if underlying data is Eq
-impl<T, A, const N: usize> Eq for AlignedVec<T, A, N> where T: Eq {}
+impl<T, A, const N: usize> Eq for GenericVec<T, A, N> where T: Eq {}
 
-impl<T, A1, A2, const N1: usize, const N2: usize> PartialOrd<AlignedVec<T, A2, N2>>
-    for AlignedVec<T, A1, N1>
+impl<T, A1, A2, const N1: usize, const N2: usize> PartialOrd<GenericVec<T, A2, N2>>
+    for GenericVec<T, A1, N1>
 where
     T: PartialOrd,
 {
-    fn partial_cmp(&self, other: &AlignedVec<T, A2, N2>) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &GenericVec<T, A2, N2>) -> Option<Ordering> {
         PartialOrd::partial_cmp(&**self, &**other)
     }
 }
 
-impl<T, A, const N: usize> Ord for AlignedVec<T, A, N>
+impl<T, A, const N: usize> Ord for GenericVec<T, A, N>
 where
     T: Ord,
 {
@@ -1295,7 +1569,7 @@ where
     }
 }
 
-impl<T, A, const N: usize> ops::Deref for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> ops::Deref for GenericVec<T, A, N> {
     type Target = [T];
 
     fn deref(&self) -> &[T] {
@@ -1303,41 +1577,41 @@ impl<T, A, const N: usize> ops::Deref for AlignedVec<T, A, N> {
     }
 }
 
-impl<T, A, const N: usize> ops::DerefMut for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> ops::DerefMut for GenericVec<T, A, N> {
     fn deref_mut(&mut self) -> &mut [T] {
         self.as_mut_slice()
     }
 }
 
-impl<T, A, const N: usize> AsRef<AlignedVec<T, A, N>> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> AsRef<GenericVec<T, A, N>> for GenericVec<T, A, N> {
     #[inline]
     fn as_ref(&self) -> &Self {
         self
     }
 }
 
-impl<T, A, const N: usize> AsMut<AlignedVec<T, A, N>> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> AsMut<GenericVec<T, A, N>> for GenericVec<T, A, N> {
     #[inline]
     fn as_mut(&mut self) -> &mut Self {
         self
     }
 }
 
-impl<T, A, const N: usize> AsRef<[T]> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> AsRef<[T]> for GenericVec<T, A, N> {
     #[inline]
     fn as_ref(&self) -> &[T] {
         self
     }
 }
 
-impl<T, A, const N: usize> AsMut<[T]> for AlignedVec<T, A, N> {
+impl<T, A, const N: usize> AsMut<[T]> for GenericVec<T, A, N> {
     #[inline]
     fn as_mut(&mut self) -> &mut [T] {
         self
     }
 }
 
-impl<T, A, const N: usize> Clone for AlignedVec<T, A, N>
+impl<T, A, const N: usize> Clone for GenericVec<T, A, N>
 where
     T: Clone,
 {
@@ -1756,7 +2030,6 @@ mod tests {
         assert!(v.is_full());
     }
 
-    // https://godbolt.org/z/K5955r7WG
     #[test]
     fn simple_transmute_buffer() {
         let mut v = AlignedVec::<u8, /*alignas*/ u32, 4>::new();

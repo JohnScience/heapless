@@ -77,7 +77,9 @@
 
 pub use binary_heap::BinaryHeap;
 pub use deque::Deque;
-pub use generic_vec::{AlignedVec, VecBuf};
+pub use generic_vec::{AlignedVec, Vec};
+#[cfg(feature = "generic-vec")]
+pub use generic_vec::{GenericVec, VecBuf};
 pub use histbuf::{HistoryBuffer, OldestOrdered};
 pub use indexmap::{
     Bucket, Entry, FnvIndexMap, IndexMap, Iter as IndexMapIter, IterMut as IndexMapIterMut,
@@ -87,7 +89,6 @@ pub use indexmap::{
 pub use indexset::{FnvIndexSet, IndexSet, Iter as IndexSetIter};
 pub use linear_map::LinearMap;
 pub use string::String;
-pub use vec::Vec;
 
 #[macro_use]
 #[cfg(test)]
@@ -100,7 +101,6 @@ mod indexmap;
 mod indexset;
 mod linear_map;
 pub mod string;
-mod vec;
 
 #[cfg(feature = "serde")]
 mod de;
